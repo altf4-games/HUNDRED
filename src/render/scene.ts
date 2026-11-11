@@ -1,7 +1,40 @@
 // Renderer, lighting and the day/night cycle. Reads sim state, never writes it.
 import * as THREE from 'three';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import type { Building, Sim, World } from '../sim/types';
 import { type City, buildCity } from './city';
+
+// Final grade: miniature-style tilt-shift when zoomed out, plus a soft vignette. Runs on linear
+// HDR colour just before tone mapping.
+const GradeShader = {
+  uniforms: { tDiffuse: { value: null as THREE.Texture | null }, resolution: { value: new THREE.Vector2(1, 1) }, tilt: { value: 0 }, vignette: { value: 0.3 } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `
+    uniform sampler2D tDiffuse; uniform vec2 resolution; uniform float tilt; uniform float vignette;
+    varying vec2 vUv;
+    void main() {
+      float band = smoothstep(0.14, 0.62, abs(vUv.y - 0.52));
+      float r = tilt * band * 5.5;
+      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      if (r > 0.08) {
+        vec3 sum = c; float w = 1.0;
+        for (int i = 0; i < 12; i++) {
+          float a = float(i) * 2.39996;
+          float d = sqrt((float(i) + 0.5) / 12.0);
+          vec2 o = vec2(cos(a), sin(a)) * d * r / resolution;
+          sum += texture2D(tDiffuse, vUv + o).rgb; w += 1.0;
+        }
+        c = sum / w;
+      }
+      vec2 q = vUv - 0.5;
+      c *= 1.0 - vignette * dot(q, q) * 2.4;
+      gl_FragColor = vec4(c, 1.0);
+    }`,
+};
 
 interface Key { h: number; sky: number; fog: number; sun: number; sunI: number; hemiI: number; ground: number; }
 // Keyframes across the day. Hours wrap at 24.
@@ -25,7 +58,14 @@ export interface View {
   /** 0 in full daylight, 1 at night. */
   night: number;
   setTime(hourFloat: number, focus: THREE.Vector3): void;
+  /** Decide which windows should be lit (a few times a second). */
   updateWindows(sim: Sim): void;
+  /** Fade windows towards their targets (every frame). */
+  animateWindows(dt: number): void;
+  /** Draw the frame. `camDist` drives the tilt-shift amount. */
+  render(camDist: number): void;
+  fx: boolean;
+  setFx(on: boolean): void;
   updateSmoke(dt: number, active: boolean): void;
   /** Swap in a freshly generated town (new seed). */
   loadWorld(world: World): void;
@@ -49,11 +89,13 @@ export function createView(canvas: HTMLCanvasElement, world: World): View {
   scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xffffff, 3);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  // The shadow frustum covers the whole town and never follows the camera. A frustum that
+  // moves without snapping to shadow-map texels makes shadow edges crawl and shimmer.
+  sun.shadow.mapSize.set(4096, 4096);
   const sc = sun.shadow.camera;
-  sc.left = -46; sc.right = 46; sc.top = 46; sc.bottom = -46; sc.near = 10; sc.far = 220;
-  sun.shadow.bias = -0.0006;
-  sun.shadow.normalBias = 0.04;
+  sc.left = -54; sc.right = 54; sc.top = 54; sc.bottom = -54; sc.near = 10; sc.far = 260;
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.05;
   scene.add(sun, sun.target);
 
   let city = buildCity(world);
@@ -77,6 +119,8 @@ export function createView(canvas: HTMLCanvasElement, world: World): View {
     return m;
   };
   const sunDisc = disc(0xfff3c4, 9), moonDisc = disc(0xdfe6ff, 6);
+  (sunDisc.material as THREE.MeshBasicMaterial).color.multiplyScalar(2.4); // above 1 so bloom picks them up
+  (moonDisc.material as THREE.MeshBasicMaterial).color.multiplyScalar(1.6);
 
   // Factory smoke: a small pool of soft sprites.
   const smokeTex = (() => {
@@ -95,13 +139,26 @@ export function createView(canvas: HTMLCanvasElement, world: World): View {
     smoke.push({ s, age: Math.random() * 6, life: 6, src: i % Math.max(1, city.smokeAt.length) });
   }
 
+  // Post-processing: multisampled HDR target -> bloom -> grade -> tone mapping and sRGB output.
+  const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 });
+  const composer = new EffectComposer(renderer, target);
+  composer.addPass(new RenderPass(scene, camera));
+  const bloom = new UnrealBloomPass(new THREE.Vector2(512, 512), 0.4, 0.55, 1.05);
+  composer.addPass(bloom);
+  const grade = new ShaderPass(GradeShader);
+  composer.addPass(grade);
+  composer.addPass(new OutputPass());
+
   const cA = new THREE.Color(), cB = new THREE.Color();
   const lerpHex = (a: number, b: number, t: number, into: THREE.Color) => into.copy(cA.set(a)).lerp(cB.set(b), t);
   const lit = new THREE.Color(), unlit = new THREE.Color(0x2b3a4d), glass = new THREE.Color(0x5d7f9c), tmp = new THREE.Color();
   const occupied = new Uint8Array(256);
+  const occEma = new Float32Array(256); // smoothed occupancy, so a person walking past does not toggle a window
+  let winTarget = new Float32Array(0), winBright = new Float32Array(0), lastWinNight = -1;
+  const darkC = new THREE.Color(), litC = new THREE.Color();
 
   const view: View = {
-    renderer, scene, camera, city, night: 0,
+    renderer, scene, camera, city, night: 0, fx: true,
     setTime(h, focus) {
       let i = 0;
       while (i < KEYS.length - 2 && h >= (KEYS[i + 1] as Key).h) i++;
@@ -121,8 +178,9 @@ export function createView(canvas: HTMLCanvasElement, world: World): View {
       const arc = isDay ? dayT : ((h + 24 - 19.5) % 24) / 10.5;
       const ang = arc * Math.PI;
       const dx = Math.cos(ang) * 0.85, dy = Math.max(0.16, Math.sin(ang)), dz = 0.45;
-      sun.position.set(focus.x + dx * 110, dy * 110, focus.z + dz * 110);
-      sun.target.position.set(focus.x, 0, focus.z);
+      void focus;
+      sun.position.set(dx * 110, dy * 110, dz * 110);
+      sun.target.position.set(0, 0, 0);
       const far = 380;
       (isDay ? sunDisc : moonDisc).position.set(camera.position.x + dx * far, Math.sin(ang) * far * 0.8 - 20, camera.position.z + dz * far);
       sunDisc.visible = isDay; moonDisc.visible = !isDay;
@@ -131,29 +189,61 @@ export function createView(canvas: HTMLCanvasElement, world: World): View {
       view.night = night;
       (stars.material as THREE.PointsMaterial).opacity = Math.max(0, night - 0.3) * 1.3;
       stars.position.copy(camera.position);
-      (city.lampGlow.material as THREE.MeshBasicMaterial).opacity = night * 0.55;
-      (city.lampBulbs.material as THREE.MeshBasicMaterial).color.setHex(night > 0.25 ? 0xffe9b0 : 0x6a6f78);
+      (city.lampGlow.material as THREE.MeshBasicMaterial).opacity = night * 0.42;
+      // Lamp bulbs ramp up smoothly (no hard switch) and go above 1 so they bloom.
+      const lamp = Math.min(1, Math.max(0, (night - 0.15) / 0.5));
+      (city.lampBulbs.material as THREE.MeshBasicMaterial).color.setHex(0x6a6f78).lerp(cA.set(0xffe9b0).multiplyScalar(4), lamp);
+      bloom.strength = 0.14 + night * 0.5;
       renderer.toneMappingExposure = 1.0 + night * 0.25;
     },
     updateWindows(s) {
-      // A building's windows glow when someone is inside after dark.
+      // Which windows want to be lit. Occupancy is smoothed and each window has hysteresis, so
+      // lights come on gradually through dusk and do not flicker as people move around.
       occupied.fill(0);
       for (const a of s.agents) if (a.status === 'active' && a.tripFrom < 0 && a.action !== 'sleep') occupied[a.at] = Math.min(255, (occupied[a.at] as number) + 1);
+      for (let b = 0; b < occEma.length; b++) occEma[b] = (occEma[b] as number) + ((occupied[b] as number) - (occEma[b] as number)) * 0.2;
       const n = view.night;
       const w = city.windows;
+      if (winTarget.length !== w.count) { winTarget = new Float32Array(w.count); winBright = new Float32Array(w.count); lastWinNight = -1; }
       for (let i = 0; i < w.count; i++) {
         const b = city.windowBuilding[i] as number;
         const seed = city.windowSeed[i] as number;
-        const people = occupied[b] as number;
+        const people = occEma[b] as number;
         const kind = (s.world.buildings[b] as Building).kind;
-        const share = people === 0 ? 0 : kind === 'house' ? 0.75 : Math.min(0.9, 0.25 + people * 0.09);
-        if (n > 0.2 && seed < share) {
-          lit.setHex(seed * 7 % 1 < 0.2 ? 0xfff1cf : 0xffcf7a);
-          w.setColorAt(i, tmp.copy(glass).lerp(lit, Math.min(1, n * 1.4)));
-        } else w.setColorAt(i, tmp.copy(glass).lerp(unlit, 0.35 + n * 0.65));
+        const share = people < 0.15 ? 0 : kind === 'house' ? 0.75 : Math.min(0.9, 0.25 + people * 0.09);
+        const onset = 0.2 + ((seed * 13.7) % 1) * 0.6; // windows light at different moments of dusk
+        const was = (winTarget[i] as number) > 0.5;
+        winTarget[i] = n > onset && seed < share + (was ? 0.1 : 0) ? 1 : 0;
+      }
+    },
+    animateWindows(dt) {
+      const w = city.windows;
+      if (winTarget.length !== w.count) return;
+      const n = view.night;
+      const k = Math.min(1, dt * 2.2);
+      let moving = Math.abs(n - lastWinNight) > 0.004;
+      for (let i = 0; i < w.count; i++) {
+        const d = (winTarget[i] as number) - (winBright[i] as number);
+        if (Math.abs(d) > 0.002) { winBright[i] = (winBright[i] as number) + d * k; moving = true; }
+        else if (d !== 0) { winBright[i] = winTarget[i] as number; moving = true; }
+      }
+      if (!moving) return;
+      lastWinNight = n;
+      darkC.copy(glass).lerp(unlit, 0.35 + n * 0.65);
+      for (let i = 0; i < w.count; i++) {
+        const br = winBright[i] as number;
+        if (br < 0.003) { w.setColorAt(i, darkC); continue; }
+        litC.setHex(((city.windowSeed[i] as number) * 7) % 1 < 0.2 ? 0xfff1cf : 0xffcf7a);
+        w.setColorAt(i, tmp.copy(darkC).lerp(litC, br).multiplyScalar(1 + br * 1.05)); // above 1 so lit windows bloom
       }
       if (w.instanceColor) w.instanceColor.needsUpdate = true;
     },
+    render(camDist) {
+      if (!view.fx) { renderer.render(scene, camera); return; }
+      grade.uniforms.tilt!.value = THREE.MathUtils.smoothstep(camDist, 30, 95) * 0.85;
+      composer.render();
+    },
+    setFx(on) { view.fx = on; },
     updateSmoke(dt, active) {
       if (city.smokeAt.length === 0) return;
       for (const p of smoke) {
@@ -188,6 +278,9 @@ export function createView(canvas: HTMLCanvasElement, world: World): View {
     resize() {
       const w = canvas.clientWidth, h = canvas.clientHeight;
       renderer.setSize(w, h, false);
+      composer.setSize(w, h);
+      const buf = renderer.getDrawingBufferSize(new THREE.Vector2());
+      grade.uniforms.resolution!.value.copy(buf);
       camera.aspect = w / Math.max(1, h);
       camera.updateProjectionMatrix();
     },

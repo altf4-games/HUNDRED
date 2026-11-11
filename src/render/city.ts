@@ -121,7 +121,7 @@ export function buildCity(world: World): City {
   /** Window on a wall of the current building. side: 0 front(+z) 1 back 2 right(+x) 3 left. */
   const win = (building: number, side: number, along: number, y: number, depth: number, w: number, h: number) => {
     const ry = [0, Math.PI, Math.PI / 2, -Math.PI / 2][side] as number;
-    const off = depth + 0.012;
+    const off = depth + 0.03;
     const lx = side === 0 ? along : side === 1 ? along : side === 2 ? off : -off;
     const lz = side === 0 ? off : side === 1 ? -off : along;
     wq.setFromAxisAngle(up, ry);
@@ -512,7 +512,7 @@ export function buildCity(world: World): City {
   group.add(hills.build(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true }), false));
   for (const d of waterDiscs) group.add(d);
 
-  const winMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ toneMapped: false }), windows.length);
+  const winMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ toneMapped: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }), windows.length);
   const windowBuilding = new Int16Array(windows.length);
   const windowSeed = new Float32Array(windows.length);
   const dark = new THREE.Color(0x2b3a4d);

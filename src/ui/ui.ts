@@ -12,6 +12,8 @@ import { describeAction, intentionText, moodEmoji } from './describe';
 export interface App {
   sim: Sim;
   speed: number;
+  fx: boolean;
+  setFx(on: boolean): void;
   skipping: boolean;
   selected: number;
   selectedBuilding: number;
@@ -301,6 +303,8 @@ export function createUI(root: HTMLElement, app: App): UI {
         <button data-g="flu">🦠 Flu outbreak<small>A dozen people fall ill</small></button>
         <button data-g="police">🚓 Double the police<small>More arrests, fewer escapes</small></button>
       </div>
+      <h3 style="margin-top:14px">Graphics</h3>
+      <div class="tools"><button data-g="fx">✨ Bloom &amp; tilt-shift: <b>${app.fx ? 'on' : 'off'}</b><small>Turn off on slower GPUs</small></button></div>
       <h3 style="margin-top:14px">AI minds</h3>
       <div class="kv"><span>Model calls per sim day</span><b class="num" id="bud-v">${app.sim.budget}</b></div>
       <input type="range" id="bud" min="0" max="${CFG.budgetMax}" value="${app.sim.budget}" />
@@ -315,6 +319,7 @@ export function createUI(root: HTMLElement, app: App): UI {
     else if (g === 'stimulus') godStimulus(sim);
     else if (g === 'flu') godFluOutbreak(sim);
     else if (g === 'police') godDoublePolice(sim);
+    else if (g === 'fx') { app.setFx(!app.fx); renderGod(); }
   });
   god.addEventListener('input', (e) => {
     const t = e.target as HTMLInputElement;

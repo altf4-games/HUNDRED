@@ -13,6 +13,7 @@ It is a static site. No backend, no API keys, no paid services, no downloaded ar
 ## What you get
 
 - **A living 3D town.** About 55 procedural buildings (houses, apartments, school, clinic, police station, town hall, shops, bar, factory, office, farm, park, pond, woods, cemetery), with a day and night cycle, lamps, lit windows and factory smoke.
+- **Cinematic lighting.** HDR bloom makes lamps and lit windows glow, lights fade on and off gradually through dusk instead of popping, shadows stay stable as you move, and a tilt-shift blur gives the zoomed-out town a miniature look. Bloom and tilt-shift can be switched off under God tools on slower GPUs.
 - **People who look like people.** Head, hair, eyes, torso, arms, legs and shoes, in different skin tones, hairstyles, heights and clothes. Children carry backpacks, police and clinic staff wear uniforms, seniors stoop, and the sick slump. They walk, sit on park benches and sway when idle.
 - **City to street in one scroll.** Tilt follows zoom: top-down from afar, near eye level up close. Click anyone to inspect them, or press `F` to follow.
 - **Lives that interact.** Everyone has a home, a temperament, needs, money worries, friends and rivals. They work, fall out, fall in love, move in together, get sick, lose jobs, steal, get arrested, and sometimes leave town while newcomers arrive.
@@ -76,7 +77,7 @@ The default is **12 automatic calls per sim day** (adjustable from 0 to 30), enf
 
 - The per-minute tick **never waits** on the model. Dilemmas give people up to 60 sim minutes to mull before the rule choice applies. At 30x and Skip, the clock holds at dawn for the night's batch, with a 20 second timeout.
 - Every model decision is logged. A run can be replayed exactly from its log, even though the model is not deterministic (a test checks this).
-- Measured on one machine: about 0.5 s per call. A full 100-day run with AI on takes roughly 6 to 8 minutes of wall time at the default budget, while Fast skip takes about 10 seconds. Lower the budget to trade intelligence for speed.
+- Measured on one machine: about 0.5 s per call. A full 100-day run with AI on takes roughly 6 to 11 minutes of wall time at the default budget, while Fast skip takes about 10 seconds. Lower the budget to trade intelligence for speed.
 - The model is small. Its prose can embellish, so the report keeps a rule-written summary at the top and labels the model's chronicle.
 
 ## The Day 100 report
@@ -130,10 +131,10 @@ It is a static site: build with `npm run build` and serve `dist/`. Asset paths a
 - **Vercel:** import the repo (`vercel.json` is included) or run `npx vercel`.
 - **Netlify, Cloudflare Pages, GitHub Pages:** build command `npm run build`, output directory `dist`.
 
-The first visit downloads the model (hundreds of MB) from Hugging Face's CDN, which is the only network request the app makes. WebLLM then keeps it in the browser cache.
+The first visit downloads the model (hundreds of MB) from Hugging Face's CDN, which is the only network request the app makes. WebLLM then keeps it in the browser's Cache Storage for that site, so it survives closing the tab and is only removed if you clear the site's data.
 
 ## Tech
 
-Vite, TypeScript (strict), Three.js (`WebGLRenderer`), Vitest, WebLLM, and hand-rolled SVG charts. The UI is vanilla DOM and CSS with no framework.
+Vite, TypeScript (strict), Three.js (`WebGLRenderer` with an HDR post-processing chain), Vitest, WebLLM, and hand-rolled SVG charts. The UI is vanilla DOM and CSS with no framework.
 
 `plan.md` holds the full design and milestone history.

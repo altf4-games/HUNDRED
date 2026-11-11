@@ -49,7 +49,7 @@ const voiceCache = new Map<string, { text: string; by: 'llm' | 'rule' }>();
 
 const app: App = {
   sim: freshSim(urlSeed > 0 ? Math.floor(urlSeed) : 42, CFG.budgetDefault),
-  speed: 1, skipping: false, selected: -1, selectedBuilding: -1, following: false,
+  speed: 1, fx: true, setFx(on) { app.fx = on; view.setFx(on); }, skipping: false, selected: -1, selectedBuilding: -1, following: false,
   ai: llm.state, holding: false,
   setSpeed(n) { app.speed = n; if (app.skipping) app.stopSkip(); },
   skipTo(day, fast) {
@@ -306,8 +306,9 @@ function loop(now: number): void {
     view.updateWindows(sim);
     ui.refresh();
   }
+  view.animateWindows(dt);
   // While skipping, most frame time goes to the sim; draw every third frame.
-  if (!app.skipping || frame % 3 === 0) view.renderer.render(view.scene, view.camera);
+  if (!app.skipping || frame % 3 === 0) view.render(d);
 }
 
 window.addEventListener('resize', () => view.resize());
