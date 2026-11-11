@@ -254,11 +254,11 @@ If the session is running short, drop in this order: P2 items, god tools, LLM ne
 
 ## 13. Progress
 
-- [ ] M0 Scaffold
-- [ ] M1 Sim core
-- [ ] M2 3D city and peds
-- [ ] M3 UI
-- [ ] M4 Deep systems
-- [ ] M5 Report
-- [ ] M6 LLM layer
-- [ ] M7 Polish and ship
+- [x] M0 Scaffold
+- [x] M1 Sim core
+- [x] M2 3D city and peds
+- [x] M3 UI
+- [x] M4 Deep systems
+- [x] M5 Report
+- [x] M6 LLM layer
+- [x] M7 Polish and ship (God tools, README, vercel.json; GitHub Pages workflow not needed, any static host works)

@@ -41,8 +41,10 @@ export function jobPhrase(sim: Sim, a: Agent): string {
 
 function keyMoments(a: Agent): Memory[] {
   const skip = new Set(['befriended', 'gossip', 'recovered']);
-  const strong = a.mem.filter((m) => !skip.has(m.type) && !m.text.startsWith('Heard'));
-  return (strong.length >= 3 ? strong : a.mem).slice(-6);
+  // Their own moments always name them; fights they merely witnessed or heard about do not.
+  const own = a.mem.filter((m) => !m.text.startsWith('Heard') && m.text.includes(a.first));
+  const strong = own.filter((m) => !skip.has(m.type));
+  return (strong.length >= 3 ? strong : own.length ? own : a.mem).slice(-6);
 }
 
 export function buildReport(sim: Sim): Report {

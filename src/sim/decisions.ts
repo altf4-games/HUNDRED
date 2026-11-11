@@ -60,9 +60,10 @@ function submit(sim: Sim, req: DecisionRequest): void {
 
 /** Ask for an agent's intention for the next few days. Deadline is dawn. */
 export function requestIntention(sim: Sim, a: Agent): void {
-  const opts = intentionOptions(sim, a);
-  let best = 0;
-  for (let i = 1; i < opts.length; i++) if ((opts[i]!).weight > (opts[best]!).weight) best = i;
+  // Small models lean towards option 1, so the list is ordered best-first with "carry on"
+  // last: the model's default pick is then a sensible, specific intention.
+  const opts = intentionOptions(sim, a).sort((x, y) => (x.tag === 'carry-on' ? 1 : 0) - (y.tag === 'carry-on' ? 1 : 0) || y.weight - x.weight);
+  const best = 0;
   const dawn = dayOf(sim) * CFG.dayTicks + 6 * 60;
   submit(sim, {
     id: sim.nextDecisionId++, kind: 'intention', dilemma: null, agent: a.id, other: -1, place: -1,
